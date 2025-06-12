@@ -15,22 +15,12 @@ const baseMaps = {
   "OpenStreetMap": osm
 };
 
-// Variables para capas adicionales que se cargarán dinámicamente
+// Capas adicionales
 let capaBuffer500mts = L.geoJSON(null, {
   style: {
     color: "orange",
     weight: 2,
     fillOpacity: 0.2
-  },
-  pointToLayer: (feature, latlng) => {
-    if (feature.geometry.type === "Point") {
-      return L.circleMarker(latlng, {
-        radius: 6,
-        color: "orange",
-        fillColor: "orange",
-        fillOpacity: 1
-      });
-    }
   }
 });
 
@@ -39,20 +29,9 @@ let capaLimitesFundos = L.geoJSON(null, {
     color: "purple",
     weight: 2,
     fillOpacity: 0.2
-  },
-  pointToLayer: (feature, latlng) => {
-    if (feature.geometry.type === "Point") {
-      return L.circleMarker(latlng, {
-        radius: 6,
-        color: "purple",
-        fillColor: "purple",
-        fillOpacity: 1
-      });
-    }
   }
 });
 
-// Añadimos un grupo para las viviendas
 let capaViviendas = L.geoJSON(null, {
   pointToLayer: (feature, latlng) => {
     const tieneDatos = feature.properties.tiene_agua && feature.properties.tipo_conexion;
@@ -86,7 +65,7 @@ let capaViviendas = L.geoJSON(null, {
           <option value="Aljibe" ${feature.properties.tipo_conexion === "Aljibe" ? "selected" : ""}>Aljibe</option>
           <option value="Río/Vertiente/Lago" ${feature.properties.tipo_conexion === "Río/Vertiente/Lago" ? "selected" : ""}>Río/Vertiente/Lago</option>
         </select><br/><br/>
-        <label for="texto">Texto adicional (max 100 caracteres):</label><br/>
+        <label for="texto">Beneficiario (max 100 caracteres):</label><br/>
         <textarea id="texto" maxlength="100" rows="3" cols="30">${textoGuardado}</textarea><br/><br/>
         <button id="enviar">Enviar</button>
       `;
@@ -121,7 +100,7 @@ let capaViviendas = L.geoJSON(null, {
   }
 });
 
-// Control de capas de superposición
+// Control de capas
 const overlayMaps = {
   "Buffer 500 mts": capaBuffer500mts,
   "Límites de fundos": capaLimitesFundos,
@@ -130,9 +109,9 @@ const overlayMaps = {
 
 L.control.layers(baseMaps, overlayMaps).addTo(map);
 
-// Leyenda con fondo blanco y sombra para mejor visibilidad
-const leyenda = L.control({position: 'bottomright'});
-leyenda.onAdd = function(map) {
+// Leyenda
+const leyenda = L.control({ position: 'bottomright' });
+leyenda.onAdd = function (map) {
   const div = L.DomUtil.create('div', 'info legend');
   div.style.backgroundColor = 'white';
   div.style.padding = '8px';
@@ -149,16 +128,22 @@ leyenda.onAdd = function(map) {
 };
 leyenda.addTo(map);
 
+// Cargar polígono de Nacimiento y demás capas relacionadas
 let poligonoNacimiento = null;
 
-// Cargar y filtrar polígono de Nacimiento
 fetch('data/areas_relacionamiento.geojson')
   .then(res => res.json())
   .then(data => {
     const nacFeatures = data.features.filter(f => f.properties.c_dsc_z_adm_pat === "NACIMIENTO");
 
     if (nacFeatures.length > 0) {
-      poligonoNacimiento = nacFeatures[0];
+      const geometry = nacFeatures[0].geometry;
+      if (geometry.type === "MultiPolygon") {
+        const merged = turf.union(...nacFeatures.map(f => turf.polygon(f.geometry.coordinates)));
+        poligonoNacimiento = merged;
+      } else {
+        poligonoNacimiento = nacFeatures[0];
+      }
 
       const layer = L.geoJSON(poligonoNacimiento, {
         style: {
@@ -171,71 +156,69 @@ fetch('data/areas_relacionamiento.geojson')
       map.fitBounds(layer.getBounds());
 
       cargarViviendas();
-
-      cargarCapasAdicionales();
+      cargarBuffer();
+      cargarLimitesFundos();
     }
   });
 
-// Función para cargar capas adicionales filtrando features dentro de polígonoNacimiento
-function cargarCapasAdicionales() {
-  fetch('data/buffer_500mts.geojson')
-    .then(res => res.json())
-    .then(data => {
-      const filtrados = {
-        type: "FeatureCollection",
-        features: data.features.filter(feature => {
-          const geomType = feature.geometry.type;
-
-          if (geomType === "Point") {
-            return turf.booleanPointInPolygon(feature, poligonoNacimiento);
-          } else if (geomType === "Polygon" || geomType === "MultiPolygon") {
-            return turf.booleanWithin(feature, poligonoNacimiento);
-          }
-          return false;
-        })
-      };
-
-      capaBuffer500mts.clearLayers();
-      capaBuffer500mts.addData(filtrados);
-      capaBuffer500mts.addTo(map);
-    });
-
-  fetch('data/limites_fundos_32718.geojson')
-    .then(res => res.json())
-    .then(data => {
-      const filtrados = {
-        type: "FeatureCollection",
-        features: data.features.filter(feature => {
-          const geomType = feature.geometry.type;
-
-          if (geomType === "Point") {
-            return turf.booleanPointInPolygon(feature, poligonoNacimiento);
-          } else if (geomType === "Polygon" || geomType === "MultiPolygon") {
-            return turf.booleanWithin(feature, poligonoNacimiento);
-          }
-          return false;
-        })
-      };
-
-      capaLimitesFundos.clearLayers();
-      capaLimitesFundos.addData(filtrados);
-      capaLimitesFundos.addTo(map);
-    });
-}
-
+// Función para cargar viviendas
 function cargarViviendas() {
   fetch('data/viviendas_rurales_influencia_buffer.geojson')
     .then(res => res.json())
     .then(data => {
       const viviendasFiltradas = {
         type: "FeatureCollection",
-        features: data.features.filter(punto => {
-          return turf.booleanPointInPolygon(punto, poligonoNacimiento);
-        })
+        features: data.features.filter(punto =>
+          turf.booleanPointInPolygon(punto, poligonoNacimiento)
+        )
       };
-
       capaViviendas.clearLayers();
       capaViviendas.addData(viviendasFiltradas);
       capaViviendas.addTo(map);
+    });
+}
+
+// Función para cargar el buffer filtrado
+function cargarBuffer() {
+  fetch("data/buffer_500mts.geojson")
+    .then(res => res.json())
+    .then(data => {
+      console.log("Total buffers:", data.features.length);
+
+      capaBuffer500mts.clearLayers();
+
+      if (!poligonoNacimiento || !poligonoNacimiento.geometry) {
+        console.error("Polígono de Nacimiento no definido.");
+        return;
+      }
+
+      const bufferFiltrado = data.features.filter(f =>
+        turf.booleanIntersects(f, poligonoNacimiento)
+      );
+
+      capaBuffer500mts.addData({
+        type: "FeatureCollection",
+        features: bufferFiltrado
+      });
+
+      capaBuffer500mts.addTo(map);
+    })
+    .catch(err => console.error("Error cargando buffer:", err));
+}
+
+// Función para cargar límites de fundos
+function cargarLimitesFundos() {
+  fetch('data/limites_fundos_32718.geojson')
+    .then(res => res.json())
+    .then(data => {
+      const limitesFiltrados = {
+        type: "FeatureCollection",
+        features: data.features.filter(feature =>
+          turf.booleanIntersects(feature, poligonoNacimiento)
+        )
+      };
+      capaLimitesFundos.clearLayers();
+      capaLimitesFundos.addData(limitesFiltrados);
+      capaLimitesFundos.addTo(map);
     });
 }
